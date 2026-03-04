@@ -26,8 +26,8 @@ Each corpus is divided into splits. **Train and Val contain engagement annotatio
 
 | Corpus | Train | Val | Test | Additional Test |
 |---|---|---|---|---|
-| NoXi | ✓ annotations | ✓ annotations | - | - |
-| NoXi+J | ✓ annotations | ✓ annotations | - | N/A |
+| NoXi | annotations | annotations | - | - |
+| NoXi+J | annotations | annotations | - | N/A |
 
 NoXi+J split example (session numbers):
 
@@ -126,13 +126,13 @@ pip install numpy pandas matplotlib scipy tqdm torch torchvision torchaudio tran
 ## Repository Structure
 
 ```
-├── data/                                    # Dataset root (gitignored)
+├── data/                                     # Dataset root (gitignored)
 │   ├── NoXi/
 │   ├── NoXi+J/
 │   └── MPII/
 ├── MultiModalSocialAnalysisBehaviour_venv/  # Python virtual environment
 ├── src/
-│   └── read_data.py                        # Reading Data
+│   └── read_data.py                         # Reading Data
 └── README.md
 ```
 
