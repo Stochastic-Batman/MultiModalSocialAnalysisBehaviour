@@ -80,8 +80,6 @@ Example `.stream` header:
 </stream>
 ```
 
-> **Note:** Different modalities run at different sample rates (eGeMaps at 100Hz, engagement labels at 25Hz, video features at the recording FPS). Temporal alignment to a common clock is required before feeding features to any model.
-
 ### Data Access
 
 To obtain the data, you must follow the official MultiMediate procedures:
@@ -120,6 +118,8 @@ source MultiModalSocialAnalysisBehaviour_venv/bin/activate  # Linux/macOS
 pip install --upgrade pip
 pip install numpy pandas matplotlib scipy tqdm torch torchvision torchaudio transformers
 ```
+
+> **Note for Windows Users:** To use the **NOVA** tool for manual session annotation and visualization, please refer to the [NOVA repository](https://github.com/hcmlab/nova).
 
 ## Repository Structure
 
