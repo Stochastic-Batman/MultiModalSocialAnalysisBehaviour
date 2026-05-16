@@ -115,8 +115,11 @@ source EngageNet_venv/bin/activate  # Linux/macOS
 ### 2. Install Dependencies
 
 ```bash
-pip install --upgrade pip
-pip install numpy pandas matplotlib scipy tqdm torch torchvision torchaudio transformers
+pip install --upgrade pip setuptools wheel
+pip install numpy pandas matplotlib scipy tqdm transformers
+
+# JAX ecosystem for NVIDIA GPU acceleration (with CPU fallback capability)
+pip install "jax[cuda12]" flax optax
 ```
 
 > **Note for Windows Users:** To use the **NOVA** tool for manual session annotation and visualization, please refer to the [NOVA repository](https://github.com/hcmlab/nova).
