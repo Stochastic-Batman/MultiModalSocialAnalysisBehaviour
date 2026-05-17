@@ -1,6 +1,6 @@
-"""InitEncoder_i - shallow per-modality 1-D convolutional feature extractor.
+r"""InitEncoder_i - shallow per-modality 1-D convolutional feature extractor.
 
-Maps  x_i \in R^{C_i × L}  ->  h_i \in R^{L' × C_i'}
+Maps  x_i \in R^{C_i x L}  ->  h_i \in R^{L' x C_i'}
 The dimension transposition (channels-first input -> time-first output) is handled inside the module so downstream code always receives (L', C_i').
 """
 

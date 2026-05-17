@@ -14,10 +14,10 @@ _DEFAULT_MODALITY_SPECS: Dict[str, Tuple[int, int, int, int]] = {
     "openface2":                    (714,  128, 5, 1),   # Action Units + facial landmarks + gaze direction + head pose
     "openpose":                     (139,  64,  5, 1),
     "clip":                         (512,  128, 5, 1),
-    "dino":                         (384,  128, 5, 1),
+    "dino":                         (2304, 128, 5, 1),
     "imagebind":                    (1024, 128, 5, 1),
     "swin":                         (768,  128, 5, 1),
-    "videomae":                     (768,  128, 5, 1),
+    "videomae":                     (1408, 128, 5, 1),
 }
 
 
