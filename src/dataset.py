@@ -93,11 +93,13 @@ class EngageNetDataset:
         session = load_session(session_dir)
         cnfg = self.cnfg
 
-        # 1. Resample every stream to target_sr -> dict[key] = (T, D)
+        # 1. Resample only active streams to target_sr -> dict[key] = (T, D)
+        active_feats = cnfg.modality_names
         resampled: Dict[str, np.ndarray] = {}
+
         for role in ROLES:
             streams = session[role].get("streams", {})
-            for feat in STREAM_FEATURES:
+            for feat in active_feats:
                 entry = streams.get(feat)
                 if entry is None:
                     continue

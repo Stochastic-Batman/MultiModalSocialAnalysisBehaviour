@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # Per-modality metadata
 # (input_channels C_i, output_channels C_i', kernel_size, stride)
@@ -20,6 +20,9 @@ _DEFAULT_MODALITY_SPECS: Dict[str, Tuple[int, int, int, int]] = {
     "videomae":                     (1408, 128, 5, 1),
 }
 
+# The 4 streams most relevant to engagement prediction
+CORE_MODALITIES: List[str] = ["audio.egemapsv2", "audio.w2vbert2_embeddings", "openface2", "openpose"]
+
 
 @dataclass
 class EngageNetConfig:
@@ -35,9 +38,12 @@ class EngageNetConfig:
     window_stride: int = 125       # hop between windows (= 5 s, 50 % overlap)
 
     # Modality specs  (name -> (C_i, C_i', kernel, stride))
-    modality_specs: Dict[str, Tuple[int, int, int, int]] = field(
-        default_factory=lambda: dict(_DEFAULT_MODALITY_SPECS)
-    )
+    # This is the full catalogue; use active_modalities to select a subset.
+    modality_specs: Dict[str, Tuple[int, int, int, int]] = field(default_factory=lambda: dict(_DEFAULT_MODALITY_SPECS))
+
+    # Which modalities to actually use. None = all, or pass a list of keys.
+    # Example: active_modalities=CORE_MODALITIES for the lean 4-stream setup.
+    active_modalities: Optional[List[str]] = None
 
     # Shared projection dim for inter-modal fusion
     shared_dim: int = 128          # C'
@@ -51,6 +57,13 @@ class EngageNetConfig:
 
     # Derived helpers
 
+    # The specs for only the active modalities (filters modality_specs by active_modalities)
+    @property
+    def active_specs(self) -> Dict[str, Tuple[int, int, int, int]]:
+        if self.active_modalities is None:
+            return self.modality_specs
+        return {k: self.modality_specs[k] for k in self.active_modalities}
+
     # Full path to the active corpus directory (e.g. data/NoXi+J)
     @property
     def corpus_root(self) -> Path:
@@ -60,20 +73,20 @@ class EngageNetConfig:
     def split_dir(self, split: str) -> Path:
         return self.corpus_root / split
 
-    # Flat list of modality keys for iteration (e.g. ["audio.egemapsv2", ...])
+    # Flat list of active modality keys for iteration
     @property
     def modality_names(self) -> list[str]:
-        return list(self.modality_specs.keys())
+        return list(self.active_specs.keys())
 
     # Convenience accessors into the per-modality (C_i, C_i', kernel, stride) tuples
     def input_dim(self, mod: str) -> int:
-        return self.modality_specs[mod][0]
+        return self.active_specs[mod][0]
 
     def output_dim(self, mod: str) -> int:
-        return self.modality_specs[mod][1]
+        return self.active_specs[mod][1]
 
     def kernel_size(self, mod: str) -> int:
-        return self.modality_specs[mod][2]
+        return self.active_specs[mod][2]
 
     def stride(self, mod: str) -> int:
-        return self.modality_specs[mod][3]
+        return self.active_specs[mod][3]

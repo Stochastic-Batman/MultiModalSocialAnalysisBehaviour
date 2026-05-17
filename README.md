@@ -145,6 +145,25 @@ pip install "jax[cuda12]" flax optax
 └── README.md
 ```
 
+## Testing
+
+Run the smoke-test to verify the full pipeline (data loading -> encoding -> projection) works on CPU:
+
+```bash
+# All 10 feature streams (default)
+python tests/test_frontend.py
+
+# Only the 4 core engagement-relevant streams (faster, less memory)
+python tests/test_frontend.py --core
+
+# Specify a different split
+python tests/test_frontend.py val
+python tests/test_frontend.py val --core
+```
+
+The `--core` flag restricts processing to `eGeMaps v2`, `W2v-BERT 2.0`, `OpenFace2`, and `OpenPose` - the streams most relevant to engagement prediction. See `CORE_MODALITIES` in `src/config.py`.
+
+
 ## Contributors
 
 - **Research Team:** Lado Turmanidze, Luka Javakhisvhili, Mariam Gadelia, Keso Chikhladze

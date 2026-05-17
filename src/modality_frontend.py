@@ -15,7 +15,7 @@ from typing import Dict
 
 from config import EngageNetConfig
 from init_encoder import InitEncoder
-from read_data import ROLES, STREAM_FEATURES
+from read_data import ROLES
 
 
 class ModalityFrontend(nn.Module):
@@ -39,11 +39,8 @@ class ModalityFrontend(nn.Module):
         cnfg = self.cnfg
         hiddens: Dict[str, jnp.ndarray] = {}
 
-        for feat in STREAM_FEATURES:
-            spec = cnfg.modality_specs.get(feat)
-            if spec is None:
-                continue
-            _, c_out, ks, stride = spec
+        # Only iterate over active modalities (respects cnfg.active_modalities filter)
+        for feat, (_, c_out, ks, stride) in cnfg.active_specs.items():
 
             # One encoder per feature type, shared across roles
             encoder = InitEncoder(out_channels=c_out, kernel_size=ks, stride=stride, name=f"enc_{feat}")
