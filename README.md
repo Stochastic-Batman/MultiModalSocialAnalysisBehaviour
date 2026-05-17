@@ -131,9 +131,17 @@ pip install "jax[cuda12]" flax optax
 │   ├── NoXi/
 │   ├── NoXi+J/
 │   └── MPII/
-├── EngageNet_venv/  # Python virtual environment
+├── EngageNet_venv/                          # Python virtual environment
 ├── src/
-│   └── read_data.py                         # Reading Data
+│   ├── config.py                            # Centralised hyperparameters and paths
+│   ├── data_loader.py                       # Batch-yielding generator over the dataset
+│   ├── dataset.py                           # Lazy, memory-efficient window iterator
+│   ├── init_encoder.py                      # Per-modality shallow 1-D CNN encoder
+│   ├── modality_frontend.py                 # Runs all InitEncoders + channel projections
+│   └── read_data.py                         # Low-level SSI stream / annotation readers
+├── tests/
+│   └── test_frontend.py                     # Smoke-test: end-to-end forward pass on CPU
+├── engineering_roadmap.md
 └── README.md
 ```
 
