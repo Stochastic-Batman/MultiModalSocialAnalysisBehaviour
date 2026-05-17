@@ -10,7 +10,7 @@ The second constraint is hardware portability. I test on my local machine which 
 
 The third constraint is that we only implement the data pipeline and the `InitEncoder_i` + uniform channel projection layers in this phase. Everything from BiMamba onward I will write myself. The handoff point is a dictionary of tensors `{"{role}.{feat}": h_i}` where each `h_i` has shape `(B, L', C')` - batched, time-first, projected to the shared embedding dimension.
 
-## File-by-File Decisions (Chronological)
+## Phase 1: Data Pipeline and InitEncoder Frontend (Implemented)
 
 ### `src/config.py`
 
@@ -63,3 +63,54 @@ The output is a dictionary `{"{role}.{feat}": h_i}` with all hidden representati
 ### `tests/test_frontend.py`
 
 A smoke-test script that loads one real window from the first training session, wraps it in a batch-of-1, initialises the `ModalityFrontend` on CPU with a JAX PRNGKey, runs a forward pass, and prints all input and output shapes plus the total parameter count. This confirms end-to-end correctness (data loading -> resampling -> windowing -> encoding -> projection) without needing a GPU or the full dataset.
+
+## We are done with raw data handling, time for the fun architecture implementation!
+
+From this point forward, every modality is a uniform `(B, L', C')` = `(B, 250, 128)` tensor. The `ModalityFrontend` has absorbed all per-modality heterogeneity (different input dimensions, different sample rates, different data types). I never need to think about raw `C_i` values again - I just work with the `h_i` dictionary.
+
+### Phase 2: Intra-modal BiMamba
+
+For each modality key in the `h_i` dictionary, apply the BiMamba block described in Section 1.2.1 of the draft:
+
+1. **Gating**: `g_i = SiLU(W_g @ h_i + b_g)` - a learned linear projection + SiLU to highlight emotion-relevant information.
+2. **Forward SSM**: `Conv1D -> SiLU -> SelectiveSSM` on `h_i`, then Hadamard product with `g_i`.
+3. **Backward SSM**: same as forward but on `Rev_t(h_i)`, then reverse the output back.
+4. **Residual merge**: `u_i = h_i + W_o @ mean(forward, reversed_backward) + b_o`.
+
+The output `u_i` has the same shape `(B, L', C')` for every modality. This is where the Manifold-Constrained Hyper-Connections (mHC) improvement from the draft could replace the standard residual connection.
+
+The Selective SSM itself needs an implementation of the Mamba scan - either a custom JAX `lax.associative_scan` or a port of an existing Mamba kernel. On CPU this will be slow but functionally correct for testing; on GPU the parallel scan should be efficient.
+
+### Phase 3: Inter-modal BiMamba (with Gumbel-Sinkhorn ordering)
+
+1. **Concatenate** all `u_i` along the channel axis: `U = u_1 \circ u_2 \circ ... \circ u_M \in R^{L' x MC'}`.
+2. **Gumbel-Sinkhorn meta-network**: compute the score matrix `Z` from temporal mean-pooled `u_i` via query-key projections, perturb with Gumbel noise, run Sinkhorn normalisation to get a doubly-stochastic permutation matrix `P`, and apply the soft reordering.
+3. **Transpose** the reordered concatenation so the fused channel axis becomes the sequence dimension: `m_tilde \in R^{MC' x L'}`.
+4. **Apply another BiMamba block** (same architecture as intra-modal, but now modelling cross-modal dependencies along the `MC'` axis).
+
+The output `H \in R^{MC' x L'}` captures bidirectional inter-modal context.
+
+### Phase 4: Beta regression head
+
+1. **Temporal pooling** over `L'` (e.g. mean-pool or learned attention pooling) to get a fixed-size representation.
+2. **Two-head output**: two linear projections producing raw logits `z_alpha` and `z_beta`, then `alpha = softplus(z_alpha) + 1`, `beta = softplus(z_beta) + 1` to parameterise a unimodal Beta distribution.
+3. **Training loss**: Beta negative log-likelihood `L_NLL`.
+4. **Predictive mean**: `mu = alpha / (alpha + beta)`.
+5. **Predictive variance** (uncertainty proxy): `alpha * beta / ((alpha + beta)^2 * (alpha + beta + 1))`.
+
+Need both a multimodal head (fed by inter-modal BiMamba output) and per-modality unimodal heads (fed by each `u_i` independently) for the TTA selection filter.
+
+### Phase 5: Training loop
+
+1. Standard Flax training state with Optax optimiser.
+2. Iterate over `data_loader.iter_batches()` - already lazy and memory-efficient.
+3. Forward pass through `ModalityFrontend -> Intra-modal BiMamba -> Inter-modal BiMamba -> Beta heads`.
+4. Beta NLL loss + any regularisation.
+5. Checkpoint saving via `orbax-checkpoint` (already installed).
+
+### Phase 6: Test-Time Adaptation (TTA)
+
+1. **Uncertainty-based sample selection**: compute `U_multi` and `U_i` per sample, apply the adaptive percentile thresholds from the draft.
+2. **TTA loss**: `L_TTA = L_mis + lambda * sum(NLL_Beta)` - KL divergence between unimodal and multimodal Beta distributions plus pseudo-label supervision.
+3. **Surgical fine-tuning**: only update BatchNorm layers, `conv1` in InitEncoder, and the first FC layer in inter-modal BiMamba. Freeze everything else.
+4. **Online adaptation**: process test frames sequentially, maintaining the moving window of recent uncertainties for adaptive thresholds.
