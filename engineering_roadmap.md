@@ -1,20 +1,14 @@
 # Engineering Roadmap
 
-This markdown file describes the coding decisions we made after having an initial architecture, currently described in `documentation/EngageNet Draft.tex`. The architecture defines a multimodal BiMamba network with per-modality initial encoders, intra-modal and inter-modal BiMamba modules, Beta regression heads, test-time adaptation, and a differentiable Gumbel-Sinkhorn modality ordering mechanism. Before any of that can be built, we need a solid data pipeline and the first transformation layer - the `InitEncoder_i` that produces hidden representations `h_i` from raw feature streams. That is the scope of this first implementation phase.
+This markdown file describes the coding decisions we made after having an initial architecture, currently described in `documentation/EngageNet Draft.tex`. The architecture defines a multimodal BiMamba network with per-modality initial encoders, intra-modal and inter-modal BiMamba modules, Beta regression heads, test-time adaptation, and a differentiable Gumbel-Sinkhorn modality ordering mechanism.
 
-## Overall Coding Roadmap
-
-The NoXi+J dataset alone is 88.2 GiB of pre-extracted feature streams across 50 sessions, with 10 feature modalities per role (expert and novice) per session. Neither my laptop (HP Elitebook) nor potentially the data centre machines can hold all of this in RAM at once. So the very first engineering constraint is: **nothing loads the full dataset into memory**. Every piece of the pipeline must stream from disk, process one session (or one window within a session) at a time, and discard it before moving on.
-
-The second constraint is hardware portability. I test on my local machine which has no GPU - only CPU. Training happens on a remote data centre node with NVIDIA GPUs accessed over SSH. The code must run identically on both. All randomness uses `jax.random` PRNGKeys rather than NumPy's `np.random` generators so that the random state is explicit, reproducible, and compatible with JAX's functional paradigm (no hidden global state).
-
-## Phase 1: Data Pipeline and InitEncoder Frontend (Implemented)
+## Implemented
 
 ### `src/config.py`
 
 A single `@dataclass` that centralises every hyperparameter and path so nothing is hardcoded elsewhere. This is the only file you need to edit to change the corpus, window size, or per-modality encoder widths.
 
-**`_DEFAULT_MODALITY_SPECS`** - a dictionary mapping each feature name to a 4-tuple `(C_i, C_i', kernel_size, stride)`. The `C_i` values (input channels) come directly from the dataset documentation and the `.stream` XML headers: for example, eGeMaps v2 outputs 88-dimensional acoustic descriptors, W2v-BERT 2.0 produces 1024-dimensional speech embeddings, OpenPose encodes body + 2× hand keypoints as 139 values (x, y, confidence per joint), and OpenFace2 packs 714 dimensions covering Action Units (facial muscle activation intensities), facial landmarks (2D/3D coordinates of 68 face points), gaze direction vectors, and head pose (rotation + translation). The `C_i'` values (encoder output width) are set to 64 for the two lowest-dimensional modalities (eGeMaps at 88 and OpenPose at 139) and 128 for everything else - this keeps the shallow encoder from being a bottleneck on small inputs while avoiding unnecessary width on already-compact features. Kernel size 5 and stride 1 are conservative defaults: kernel 5 gives a receptive field of 5 frames (200 ms at 25 Hz), which is enough to smooth frame-level noise without losing temporal resolution, and stride 1 preserves the original sequence length so `L' = L`.
+**`_DEFAULT_MODALITY_SPECS`** - a dictionary mapping each feature name to a 4-tuple `(C_i, C_i', kernel_size, stride)`. The `C_i` values (input channels) come directly from the dataset documentation and the `.stream` XML headers: for example, eGeMaps v2 outputs 88-dimensional acoustic descriptors, W2v-BERT 2.0 produces 1024-dimensional speech embeddings, OpenPose encodes body + 2x hand keypoints as 139 values (x, y, confidence per joint), and OpenFace2 packs 714 dimensions covering Action Units (facial muscle activation intensities), facial landmarks (2D/3D coordinates of 68 face points), gaze direction vectors, and head pose (rotation + translation). The `C_i'` values (encoder output width) are set to 64 for the two lowest-dimensional modalities (eGeMaps at 88 and OpenPose at 139) and 128 for everything else - this keeps the shallow encoder from being a bottleneck on small inputs while avoiding unnecessary width on already-compact features. Kernel size 5 and stride 1 are conservative defaults: kernel 5 gives a receptive field of 5 frames (200 ms at 25 Hz), which is enough to smooth frame-level noise without losing temporal resolution, and stride 1 preserves the original sequence length so output length equals input length.
 
 **`target_sr: float = 25.0`** - the target sample rate in Hertz. All streams are resampled to this rate so that every modality shares the same temporal axis. 25 Hz was chosen because the engagement annotations are natively at 25 Hz (one label per video frame at 25 fps), so resampling to 25 Hz makes the labels and features align without any interpolation of the supervision signal.
 
@@ -22,10 +16,11 @@ A single `@dataclass` that centralises every hyperparameter and path so nothing 
 
 **`window_stride: int = 125`** - 50% overlap between consecutive windows. This doubles the effective number of training samples without loading more data from disk.
 
-**`shared_dim: int = 128`** - the uniform projection dimension `C'` from Order-Sensitivity Problem Section of the draft. After each `InitEncoder_i` produces `h_i \in R^{L' × C_i'}`, a learned linear projection maps it to `R^{L' × C'}`. This is required by the Gumbel-Sinkhorn permutation mechanism in the inter-modal fusion module: you can only permute and soft-mix modality representations if they all live in the same vector space. 128 was chosen as a balance - large enough to not lose information from the 128-wide encoder outputs, small enough that the concatenation `M × C' = 20 × 128 = 2560` doesn't blow up the inter-modal BiMamba state size.
+**`shared_dim: int = 128`** - the uniform projection dimension `C'` from the Order-Sensitivity Problem section of the draft. After each `InitEncoder_i` produces a hidden representation of shape `(L' by C_i')`, a learned linear projection maps it to shape `(L' by C')`. This is required by the Gumbel-Sinkhorn permutation mechanism in the inter-modal fusion module: you can only permute and soft-mix modality representations if they all live in the same vector space. 128 was chosen as a balance - large enough to not lose information from the 128-wide encoder outputs, small enough that the full concatenation across 20 modality-role pairs (20 times 128 = 2560 channels) does not blow up the inter-modal BiMamba state size.
 
-**`active_modalities: Optional[List[str]]`** - controls which pre-extracted feature streams are actually loaded and processed. Defaults to `None` (all 10 streams). Set to `CORE_MODALITIES` to use only the 4 streams most relevant to engagement: eGeMaps v2 (prosodic features), W2v-BERT 2.0 (learned speech representations), OpenFace2 (facial AUs, landmarks, gaze, head pose), and OpenPose (body posture and hand gestures). The remaining 6 streams (XLM-RoBERTa, CLIP, DINOv2, ImageBind, Swin, VideoMAE) are either redundant with the core 4 or encode generic visual semantics that don't vary meaningfully across engagement levels. This filter propagates everywhere: the dataset skips loading unused `.stream` files from disk, and the `ModalityFrontend` only creates encoders for active streams. Note that this only affects the pre-extracted feature streams - annotation data (engagement labels, transcripts, age, gender, language) is always loaded regardless, since it comes from separate CSV files outside the stream pipeline.
+**`active_modalities: Optional[list[str]]`** - controls which pre-extracted feature streams are actually loaded and processed. Defaults to `None` (all 10 streams). Set to `CORE_MODALITIES` to use only the 4 streams most relevant to engagement: eGeMaps v2 (prosodic features), W2v-BERT 2.0 (learned speech representations), OpenFace2 (facial AUs, landmarks, gaze, head pose), and OpenPose (body posture and hand gestures). The remaining 6 streams (XLM-RoBERTa, CLIP, DINOv2, ImageBind, Swin, VideoMAE) are either redundant with the core 4 or encode generic visual semantics that don't vary meaningfully across engagement levels. This filter propagates everywhere: the dataset skips loading unused `.stream` files from disk, and the `ModalityFrontend` only creates encoders for active streams. Note that this only affects the pre-extracted feature streams - annotation data (engagement labels, transcripts, age, gender, language) is always loaded regardless, since it comes from separate CSV files outside the stream pipeline.
 
+Note: `encoder_act: str = "silu"` is declared but never read - `init_encoder.py` hardcodes `nn.silu(x)` directly. Either wire it up or remove it before the next phase.
 
 ### `src/dataset.py`
 
@@ -37,7 +32,7 @@ The lazy, memory-efficient data pipeline. The central class `EngageNetDataset` w
 
 **Shuffling** uses a `jax.random.PRNGKey` to generate a permutation of session indices via `jax.random.permutation`. This keeps all randomness in the JAX PRNG system - explicit, splittable, and reproducible - rather than relying on NumPy's global random state.
 
-**Output format** - each window's streams are transposed to channels-first `(C_i, L)` because the `InitEncoder` expects this layout (matching the paper's notation `x_i \in R^{C_i × L}`).
+**Output format** - each window's streams are transposed to channels-first shape `(C_i, L)` because the `InitEncoder` expects this layout (matching the paper's notation for input `x_i`).
 
 ### `src/data_loader.py`
 
@@ -45,9 +40,9 @@ A thin wrapper over `EngageNetDataset.iter_windows()` that accumulates windows i
 
 ### `src/init_encoder.py`
 
-The `InitEncoder` Flax module implements the shallow per-modality feature extractor described in Section 1.2.1 of the draft: `h_i = InitEncoder_i(x_i) \in R^{L' × C_i'}`.
+The `InitEncoder` Flax module implements the shallow per-modality feature extractor described in Section 1.2.1 of the draft. It maps an input of shape `(C_i, L)` to a hidden representation of shape `(L', C_i')`.
 
-Internally it is a single `nn.Conv` (1-D, kernel and stride from config) -> `nn.BatchNorm` -> SiLU activation. The convolution uses `padding="SAME"` so that with the default stride of 1, the output length `L'` equals the input length `L`. The dimension transposition from the paper's input layout `(C_i, L)` to the output layout `(L', C_i')` is handled inside the module: the input `(B, C_i, L)` is transposed to `(B, L, C_i)` (Flax Conv expects channels-last), convolved to `(B, L', C_i')`, and returned as-is - already time-first.
+Internally it is a single `nn.Conv` (1-D, kernel and stride from config) -> `nn.BatchNorm` -> SiLU activation. The convolution uses `padding="SAME"` so that with the default stride of 1, the output length equals the input length. The dimension transposition from channels-first input `(B, C_i, L)` to time-first output `(B, L', C_i')` is handled inside the module (Flax Conv expects channels-last).
 
 BatchNorm is included because the draft's Section 2.4 (Surgical Fine-Tuning) specifically lists "BatchNorm layers" and "First convolution in InitEncoder" as the surgical layers updated during test-time adaptation. Having BatchNorm here makes TTA straightforward later: just unfreeze `batch_norm1` and `conv1` in the InitEncoder while keeping everything else frozen.
 
@@ -57,61 +52,64 @@ SiLU is the activation used throughout the Mamba architecture and is specified i
 
 The top-level `ModalityFrontend` Flax module that owns all `InitEncoder` instances (one per feature type) and `nn.Dense` projection layers (one per feature type). For each feature type, it runs the same encoder on both the expert and novice inputs - weight sharing across roles. This is the right call because expert and novice streams for the same feature (e.g. both `expert.clip` and `novice.clip`) are extracted by the same pretrained model from the same type of input (video frames), so the shallow encoder should learn the same low-level patterns for both.
 
-After each encoder produces `h_i \in R^{B × L' × C_i'}`, a per-feature `nn.Dense` projects it to the shared dimension: `h_i \in R^{B × L' × C'}`. This is the uniform channel projection `f_i` from Order-Sensitivity Section of the draft, required so that the Gumbel-Sinkhorn permutation can treat all modality representations as interchangeable objects in the same vector space.
+After each encoder produces a hidden representation of shape `(B, L', C_i')`, a per-feature `nn.Dense` projects it to the shared dimension, giving shape `(B, L', C')`. This is the uniform channel projection required so that the Gumbel-Sinkhorn permutation can treat all modality representations as interchangeable objects in the same vector space.
 
-The output is a dictionary `{"{role}.{feat}": h_i}` with all hidden representations ready for the BiMamba modules.
+The output is a dictionary keyed by `"{role}.{feat}"` with all hidden representations ready for the BiMamba modules.
+
+### `src/ssm.py`
+
+A pure JAX module (no Flax, no `nn.Module`) implementing the selective state space scan that sits at the core of every Mamba block. `bimamba.py` owns all weight matrices and computes the input-dependent parameters; `ssm.py` is the low-level primitive it calls after those projections.
+
+**`discretize(delta, A, B)`** converts continuous-time parameters to discrete-time ones. It computes the discretized transition matrix `A_bar` by exponentiating the element-wise product of `delta` and `A`, and the discretized input matrix `B_bar` as the element-wise product of `delta` and `B`. Both are broadcast to shape `(B, L, D, N)` via reshaping.
+
+**`_scan_fn(left, right)`** is the associative combiner passed to `lax.associative_scan`. Each time step defines an affine map: "given the previous hidden state, produce the next one by scaling with `A_bar_t` and adding the input contribution `b_t = B_bar_t * u_t`." Two consecutive affine maps combine by multiplying their scaling factors and folding the earlier input contribution through the later scaling. The scan accumulates these combinations across all time steps so all hidden states are computed in `O(log L)` parallel steps rather than `O(L)` sequential steps. Since the initial state is zero, the accumulated input contribution at each position is directly the hidden state at that time step, which is why only the second element of the scan output is unpacked.
+
+**`selective_scan(u, delta, A, B, C)`** is the main public function. It calls `discretize`, precomputes the input contribution at each step, transposes for the scan, calls `lax.associative_scan`, transposes back, and produces the output sequence by taking the element-wise product of the output projection `C` and the hidden states and summing over the state dimension.
+
+### `src/bimamba.py`
+
+**`BiMambaBlock`** implements the three steps from Section 1.2.1 of the draft. It takes a hidden representation of shape `(B, L', D)` and returns one of the same shape.
+
+Step 1 is gating: a learned SiLU projection produces a gate tensor of the same shape that is later applied via element-wise multiplication to suppress noise and highlight relevant features.
+
+Step 2 is a shared linear projection applied to the input before splitting into two branches.
+
+Step 3 is the forward SSM branch: a depthwise Conv1D (each channel processed independently) with SiLU captures local context, then the three input-dependent selection parameters are computed - `delta` (timescale, via `softplus(s_delta + Linear(x))`), `B` (what to write to the state), and `C` (what to read from the state). `A` is a learned parameter stored as its negated log so that the discretized transition values always land in `(0, 1)` for stable state evolution. `selective_scan` from `ssm.py` is called with these parameters, and the result is multiplied element-wise with the gate.
+
+Step 4 is the backward SSM branch: the shared projection is time-reversed before the depthwise conv, the same structure is applied with a separate set of weights, and the output is time-reversed back to the original order before gating.
+
+Step 5 is the residual merge: the forward and backward outputs are averaged, projected with a linear layer, and added to the original input as a skip connection.
+
+**`IntraModalBiMamba`** wraps a `BiMambaBlock` per feature type and applies it independently to every key in the hiddens dict. Weight sharing mirrors `ModalityFrontend`: expert and novice streams for the same feature type share one `BiMambaBlock`. Output shape is `(B, L', C')` per modality, identical to the input.
 
 ### `tests/test_frontend.py`
 
 A smoke-test script that loads one real window from the first training session, wraps it in a batch-of-1, initialises the `ModalityFrontend` on CPU with a JAX PRNGKey, runs a forward pass, and prints all input and output shapes plus the total parameter count. This confirms end-to-end correctness (data loading -> resampling -> windowing -> encoding -> projection) without needing a GPU or the full dataset.
 
-## We are done with raw data handling, time for the fun architecture implementation!
+---
 
-From this point forward, every modality is a uniform `(B, L', C')` = `(B, 250, 128)` tensor. The `ModalityFrontend` has absorbed all per-modality heterogeneity (different input dimensions, different sample rates, different data types). I never need to think about raw `C_i` values again - I just work with the `h_i` dictionary.
+## TODO
 
-### Phase 2: Intra-modal BiMamba
+### `src/inter_modal.py`
 
-For each modality key in the `h_i` dictionary, apply the BiMamba block described in Section 1.2.1 of the draft:
+Two distinct things in one file. First, the Gumbel-Sinkhorn meta-network: each modality representation is summarised by temporal mean-pooling, then asymmetric query and key projections produce an `M by M` score matrix where entry `(i, j)` scores the fitness of placing modality `j` at sequence position `i`. Independent Gumbel noise scaled by temperature `tau` is added to enable stochastic exploration of orderings during training. Applying iterative Sinkhorn-Knopp normalisation to the elementwise exponential of the perturbed scores yields a doubly-stochastic matrix `P` (rows and columns both sum to one), and the soft reordering is the `P`-weighted convex combination of the modality representations. Second, the reordered representations are concatenated and transposed so the fused channel axis becomes the sequence axis, and a `BiMambaBlock` is applied across modalities. Expose `tau` so the training loop can anneal it with the exponential decay schedule from the draft.
 
-1. **Gating**: `g_i = SiLU(W_g @ h_i + b_g)` - a learned linear projection + SiLU to highlight emotion-relevant information.
-2. **Forward SSM**: `Conv1D -> SiLU -> SelectiveSSM` on `h_i`, then Hadamard product with `g_i`.
-3. **Backward SSM**: same as forward but on `Rev_t(h_i)`, then reverse the output back.
-4. **Residual merge**: `u_i = h_i + W_o @ mean(forward, reversed_backward) + b_o`.
+Add `tests/test_inter_modal.py`: verify `P` is doubly stochastic (row and column sums close to 1), and verify the equivariance guarantee by permuting the input modalities and checking the output representation is unchanged.
 
-The output `u_i` has the same shape `(B, L', C')` for every modality. This is where the Manifold-Constrained Hyper-Connections (mHC) improvement from the draft could replace the standard residual connection.
+### `src/beta_head.py`
 
-The Selective SSM itself needs an implementation of the Mamba scan - either a custom JAX `lax.associative_scan` or a port of an existing Mamba kernel. On CPU this will be slow but functionally correct for testing; on GPU the parallel scan should be efficient.
+A `BetaHead` Flax module: mean-pool over the time axis, then two `nn.Dense` layers producing raw logits for alpha and beta, followed by `softplus + 1` to get valid shape parameters both greater than one (ensuring a unimodal distribution). Add static methods for `predictive_mean` (alpha divided by alpha plus beta), `predictive_variance` (the TTA uncertainty proxy: alpha times beta divided by the square of their sum times their sum plus one), and `nll_loss` (Beta negative log-likelihood). Then write `MultiHeadBeta` that instantiates one `BetaHead` per modality key (the unimodal heads fed directly by each per-modality output of `IntraModalBiMamba`) plus one for the fused inter-modal output - all needed by the TTA sample selection filter.
 
-### Phase 3: Inter-modal BiMamba (with Gumbel-Sinkhorn ordering)
+### `src/model.py`
 
-1. **Concatenate** all `u_i` along the channel axis: `U = u_1 \circ u_2 \circ ... \circ u_M \in R^{L' x MC'}`.
-2. **Gumbel-Sinkhorn meta-network**: compute the score matrix `Z` from temporal mean-pooled `u_i` via query-key projections, perturb with Gumbel noise, run Sinkhorn normalisation to get a doubly-stochastic permutation matrix `P`, and apply the soft reordering.
-3. **Transpose** the reordered concatenation so the fused channel axis becomes the sequence dimension: `m_tilde \in R^{MC' x L'}`.
-4. **Apply another BiMamba block** (same architecture as intra-modal, but now modelling cross-modal dependencies along the `MC'` axis).
+The full `EngageNet` Flax module that wires everything together in order: `ModalityFrontend` -> `IntraModalBiMamba` -> `InterModalBiMamba` -> `MultiHeadBeta`. Returns a dict with the multimodal prediction (alpha and beta for the fused output) and all unimodal predictions (alpha and beta per modality). The unimodal outputs are needed at train time for the TTA loss but are cheap to compute here since the unimodal heads share the already-computed per-modality representations.
 
-The output `H \in R^{MC' x L'}` captures bidirectional inter-modal context.
+Add `tests/test_model.py`: full forward pass smoke test analogous to the existing `test_frontend.py`.
 
-### Phase 4: Beta regression head
+### `src/train.py`
 
-1. **Temporal pooling** over `L'` (e.g. mean-pool or learned attention pooling) to get a fixed-size representation.
-2. **Two-head output**: two linear projections producing raw logits `z_alpha` and `z_beta`, then `alpha = softplus(z_alpha) + 1`, `beta = softplus(z_beta) + 1` to parameterise a unimodal Beta distribution.
-3. **Training loss**: Beta negative log-likelihood `L_NLL`.
-4. **Predictive mean**: `mu = alpha / (alpha + beta)`.
-5. **Predictive variance** (uncertainty proxy): `alpha * beta / ((alpha + beta)^2 * (alpha + beta + 1))`.
+Standard Flax + Optax training loop. Create a `TrainState` with an AdamW optimiser. The loss is Beta negative log-likelihood on the multimodal head. Iterate via `data_loader.iter_batches()`, call `jax.jit`-compiled train and eval steps, log metrics, and checkpoint with `orbax-checkpoint`. Handle temperature annealing for Gumbel-Sinkhorn: decay `tau` each epoch starting from an initial exploration temperature down to a near-deterministic floor via exponential decay.
 
-Need both a multimodal head (fed by inter-modal BiMamba output) and per-modality unimodal heads (fed by each `u_i` independently) for the TTA selection filter.
+### `src/tta.py`
 
-### Phase 5: Training loop
-
-1. Standard Flax training state with Optax optimiser.
-2. Iterate over `data_loader.iter_batches()` - already lazy and memory-efficient.
-3. Forward pass through `ModalityFrontend -> Intra-modal BiMamba -> Inter-modal BiMamba -> Beta heads`.
-4. Beta NLL loss + any regularisation.
-5. Checkpoint saving via `orbax-checkpoint` (already installed).
-
-### Phase 6: Test-Time Adaptation (TTA)
-
-1. **Uncertainty-based sample selection**: compute `U_multi` and `U_i` per sample, apply the adaptive percentile thresholds from the draft.
-2. **TTA loss**: `L_TTA = L_mis + lambda * sum(NLL_Beta)` - KL divergence between unimodal and multimodal Beta distributions plus pseudo-label supervision.
-3. **Surgical fine-tuning**: only update BatchNorm layers, `conv1` in InitEncoder, and the first FC layer in inter-modal BiMamba. Freeze everything else.
-4. **Online adaptation**: process test frames sequentially, maintaining the moving window of recent uncertainties for adaptive thresholds.
+Implement the TTA loop. The two-level sample filter keeps samples where the multimodal uncertainty is low (the fused prediction is confident) but the weighted average of unimodal uncertainties is high (individual modalities disagree), using adaptive percentile thresholds maintained over a moving window of the most recent `K` frames. The mutual information sharing loss is the sum of closed-form KL divergences between each unimodal Beta distribution and the multimodal Beta distribution. The total TTA loss combines this with a pseudo-label supervision term that treats the multimodal predictive mean as a target for each unimodal head, weighted by a hyperparameter `lambda`. Surgical fine-tuning: a helper that takes a `TrainState` and returns a masked gradient update that only touches BatchNorm parameters, `conv1` in each `InitEncoder`, and the first linear layer in the inter-modal BiMamba - everything else gets a zero gradient.

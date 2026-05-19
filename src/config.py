@@ -48,9 +48,6 @@ class EngageNetConfig:
     # Shared projection dim for inter-modal fusion
     shared_dim: int = 128          # C'
 
-    # InitEncoder activation function (currently hardcoded in the module, but could be made configurable here)
-    encoder_act: str = "silu"
-
     # Training
     batch_size: int = 8
     seed: int = 42
