@@ -1,3 +1,5 @@
+import argparse
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -50,7 +52,15 @@ class EngageNetConfig:
 
     # Training
     batch_size: int = 8
-    seed: int = 42
+    seed: int = 95
+    lr: float = 1e-3
+    weight_decay: float = 1e-4
+    n_epochs: int = 50
+    tau_init: float = 1.0
+    tau_min: float = 0.1
+    tau_decay: float = 0.95
+    checkpoint_every: int = 10
+    checkpoint_dir: Path = Path(__file__).resolve().parent.parent / "models"
 
     # SSM / BiMamba
     ssm_state_dim: int = 16        # N - state dimension in selective SSM
@@ -96,3 +106,52 @@ class EngageNetConfig:
 
     def stride(self, mod: str) -> int:
         return self.active_specs[mod][3]
+
+
+    @classmethod
+    def from_cli(cls) -> "EngageNetConfig":
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--corpus", type=str, default="NoXi+J")
+        parser.add_argument("--target-sr", type=float, default=25.0)
+        parser.add_argument("--window-len", type=int, default=250)
+        parser.add_argument("--window-stride", type=int, default=125)
+        parser.add_argument("--active-modalities", nargs="*", default=None)
+        parser.add_argument("--shared-dim", type=int, default=128)
+        parser.add_argument("--batch-size", type=int, default=8)
+        parser.add_argument("--seed", type=int, default=95)
+        parser.add_argument("--lr", type=float, default=1e-3)
+        parser.add_argument("--weight-decay", type=float, default=1e-4)
+        parser.add_argument("--n-epochs", type=int, default=50)
+        parser.add_argument("--tau-init", type=float, default=1.0)
+        parser.add_argument("--tau-min", type=float, default=0.1)
+        parser.add_argument("--tau-decay", type=float, default=0.95)
+        parser.add_argument("--checkpoint-every", type=int, default=10)
+        parser.add_argument("--ssm-state-dim", type=int, default=16)
+        parser.add_argument("--conv-kernel", type=int, default=4)
+        parser.add_argument("--gs-dim", type=int, default=64)
+        parser.add_argument("--gs-iters", type=int, default=10)
+        parser.add_argument("--beta-hidden", type=int, default=128)
+        args = parser.parse_args()
+
+        return cls(
+            corpus=args.corpus,
+            target_sr=args.target_sr,
+            window_len=args.window_len,
+            window_stride=args.window_stride,
+            active_modalities=args.active_modalities,
+            shared_dim=args.shared_dim,
+            batch_size=args.batch_size,
+            seed=args.seed,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            n_epochs=args.n_epochs,
+            tau_init=args.tau_init,
+            tau_min=args.tau_min,
+            tau_decay=args.tau_decay,
+            checkpoint_every=args.checkpoint_every,
+            ssm_state_dim=args.ssm_state_dim,
+            conv_kernel=args.conv_kernel,
+            gs_dim=args.gs_dim,
+            gs_iters=args.gs_iters,
+            beta_hidden=args.beta_hidden,
+        )

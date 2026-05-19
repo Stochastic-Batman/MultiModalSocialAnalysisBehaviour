@@ -41,7 +41,7 @@ def _make_logger(name: str) -> logging.Logger:
         logger.setLevel(logging.DEBUG)
     return logger
 
-log = _make_logger(f"{Path(__file__).stem}-Logger")
+log = _make_logger(f"EngageNet-Logger")
 
 
 

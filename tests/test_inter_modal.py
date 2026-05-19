@@ -30,7 +30,7 @@ def main() -> None:
     B, Lp, Cp, M = 2, 250, 128, 8  # 4 modalities x 2 roles
     D = M * Cp  # MC' = 1024
 
-    rng = jax.random.PRNGKey(0)
+    rng = jax.random.PRNGKey(95)
     rng_init, rng_gumbel, rng_data = jax.random.split(rng, 3)
 
     # Fake hiddens dict

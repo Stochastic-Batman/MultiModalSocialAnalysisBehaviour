@@ -172,6 +172,23 @@ python tests/test_frontend.py val --core
 The `--core` flag restricts processing to `eGeMaps v2`, `W2v-BERT 2.0`, `OpenFace2`, and `OpenPose` - the streams most relevant to engagement prediction. See `CORE_MODALITIES` in `src/config.py`.
 
 
+## Training
+
+```bash
+# Default settings (all 10 streams, 50 epochs, checkpoints every 10 epochs)
+python src/train.py
+
+# Override any hyperparameter via CLI
+python src/train.py --active-modalities audio.egemapsv2 audio.w2vbert2_embeddings openface2 openpose \
+                    --n-epochs 100 --lr 5e-4 --batch-size 16
+
+# Full list of options
+python src/train.py --help
+```
+
+Checkpoints are saved to `models/EngageNet_{epoch}` every `--checkpoint-every` epochs (default: 10).
+
+
 ## Contributors
 
 - **Research Team:** Lado Turmanidze, Luka Javakhisvhili, Mariam Gadelia, Keso Chikhladze
