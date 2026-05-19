@@ -133,14 +133,18 @@ pip install "jax[cuda12]" flax optax
 │   └── MPII/
 ├── EngageNet_venv/                          # Python virtual environment
 ├── src/
+│   ├── bimamba.py                            # BiMamba block + IntraModalBiMamba wrapper
 │   ├── config.py                            # Centralised hyperparameters and paths
 │   ├── data_loader.py                       # Batch-yielding generator over the dataset
 │   ├── dataset.py                           # Lazy, memory-efficient window iterator
 │   ├── init_encoder.py                      # Per-modality shallow 1-D CNN encoder
+│   ├── inter_modal.py                       # Gumbel-Sinkhorn ordering + cross-modal BiMamba
 │   ├── modality_frontend.py                 # Runs all InitEncoders + channel projections
+│   ├── ssm.py                               # Pure JAX selective state space scan primitive
 │   └── read_data.py                         # Low-level SSI stream / annotation readers
 ├── tests/
-│   └── test_frontend.py                     # Smoke-test: end-to-end forward pass on CPU
+│   ├── test_frontend.py                     # Smoke-test: end-to-end forward pass on CPU
+│   └── test_inter_modal.py                  # Smoke-test: Gumbel-Sinkhorn + cross-modal BiMamba
 ├── engineering_roadmap.md
 └── README.md
 ```

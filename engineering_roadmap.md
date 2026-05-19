@@ -85,14 +85,18 @@ Step 5 is the residual merge: the forward and backward outputs are averaged, pro
 
 A smoke-test script that loads one real window from the first training session, wraps it in a batch-of-1, initialises the `ModalityFrontend` on CPU with a JAX PRNGKey, runs a forward pass, and prints all input and output shapes plus the total parameter count. This confirms end-to-end correctness (data loading -> resampling -> windowing -> encoding -> projection) without needing a GPU or the full dataset.
 
-
-## TODO
-
 ### `src/inter_modal.py`
 
-Two distinct things in one file. First, the Gumbel-Sinkhorn meta-network: each modality representation is summarised by temporal mean-pooling, then asymmetric query and key projections produce an `M by M` score matrix where entry `(i, j)` scores the fitness of placing modality `j` at sequence position `i`. Independent Gumbel noise scaled by temperature `tau` is added to enable stochastic exploration of orderings during training. Applying iterative Sinkhorn-Knopp normalisation to the elementwise exponential of the perturbed scores yields a doubly-stochastic matrix `P` (rows and columns both sum to one), and the soft reordering is the `P`-weighted convex combination of the modality representations. Second, the reordered representations are concatenated and transposed so the fused channel axis becomes the sequence axis, and a `BiMambaBlock` is applied across modalities. Expose `tau` so the training loop can anneal it with the exponential decay schedule from the draft.
+Two components in one file. First, `GumbelSinkhorn`: a small Flax module that takes temporal mean-pooled summaries of all `M` modality representations `(B, M, C')`, projects them through asymmetric query and key matrices to produce an `M x M` score matrix, adds Gumbel noise scaled by temperature `tau` for stochastic exploration during training, and applies iterative Sinkhorn-Knopp normalisation to produce a doubly-stochastic permutation matrix `P`. The `sinkhorn` function is a standalone utility (not a module) that alternates row and column normalisation on the exponentiated scores for a fixed number of iterations.
 
-Add `tests/test_inter_modal.py`: verify `P` is doubly stochastic (row and column sums close to 1), and verify the equivariance guarantee by permuting the input modalities and checking the output representation is unchanged.
+Second, `InterModalBiMamba`: stacks all modality representations into `(B, M, L', C')`, calls `GumbelSinkhorn` to get `P`, applies the soft reordering via `einsum("bij,bjlc->bilc", P, stacked)`, reshapes the result into `(B, L', MC')` by concatenating modalities along the channel axis, and passes it through a `BiMambaBlock` that models cross-modal dependencies. The output `H` has shape `(B, L', MC')`. Temperature `tau` is exposed as a call argument so the training loop can anneal it from a high exploration value to near-deterministic over the course of training (exponential decay schedule from the draft).
+
+### `tests/test_inter_modal.py`
+
+Verifies three things on CPU with synthetic data: (1) `P` is doubly stochastic (row and column sums within 1e-3 of 1.0), (2) output shape matches `(B, L', MC')`, and (3) the model runs without errors. Uses `M=8` modalities (4 features x 2 roles) with `C'=128` giving `MC'=1024`.
+
+
+## TODO
 
 ### `src/beta_head.py`
 
