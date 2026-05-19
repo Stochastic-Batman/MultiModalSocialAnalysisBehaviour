@@ -64,7 +64,7 @@ A pure JAX module (no Flax, no `nn.Module`) implementing the selective state spa
 
 **`_scan_fn(left, right)`** is the associative combiner passed to `lax.associative_scan`. Each time step defines an affine map: "given the previous hidden state, produce the next one by scaling with `A_bar_t` and adding the input contribution `b_t = B_bar_t * u_t`." Two consecutive affine maps combine by multiplying their scaling factors and folding the earlier input contribution through the later scaling. The scan accumulates these combinations across all time steps so all hidden states are computed in `O(log L)` parallel steps rather than `O(L)` sequential steps. Since the initial state is zero, the accumulated input contribution at each position is directly the hidden state at that time step, which is why only the second element of the scan output is unpacked.
 
-**`selective_scan(u, delta, A, B, C)`** is the main public function. It calls `discretize`, precomputes the input contribution at each step, transposes for the scan, calls `lax.associative_scan`, transposes back, and produces the output sequence by taking the element-wise product of the output projection `C` and the hidden states and summing over the state dimension.
+**`ssm(u, delta, A, B, C)`** is the main public function. It calls `discretize`, precomputes the input contribution at each step, transposes for the scan, calls `lax.associative_scan`, transposes back, and produces the output sequence by taking the element-wise product of the output projection `C` and the hidden states and summing over the state dimension.
 
 ### `src/bimamba.py`
 
@@ -74,7 +74,7 @@ Step 1 is gating: a learned SiLU projection produces a gate tensor of the same s
 
 Step 2 is a shared linear projection applied to the input before splitting into two branches.
 
-Step 3 is the forward SSM branch: a depthwise Conv1D (each channel processed independently) with SiLU captures local context, then the three input-dependent selection parameters are computed - `delta` (timescale, via `softplus(s_delta + Linear(x))`), `B` (what to write to the state), and `C` (what to read from the state). `A` is a learned parameter stored as its negated log so that the discretized transition values always land in `(0, 1)` for stable state evolution. `selective_scan` from `ssm.py` is called with these parameters, and the result is multiplied element-wise with the gate.
+Step 3 is the forward SSM branch: a depthwise Conv1D (each channel processed independently) with SiLU captures local context, then the three input-dependent selection parameters are computed - `delta` (timescale, via `softplus(s_delta + Linear(x))`), `B` (what to write to the state), and `C` (what to read from the state). `A` is a learned parameter stored as its negated log so that the discretized transition values always land in `(0, 1)` for stable state evolution. `ssm` from `ssm.py` is called with these parameters, and the result is multiplied element-wise with the gate.
 
 Step 4 is the backward SSM branch: the shared projection is time-reversed before the depthwise conv, the same structure is applied with a separate set of weights, and the output is time-reversed back to the original order before gating.
 
@@ -86,7 +86,6 @@ Step 5 is the residual merge: the forward and backward outputs are averaged, pro
 
 A smoke-test script that loads one real window from the first training session, wraps it in a batch-of-1, initialises the `ModalityFrontend` on CPU with a JAX PRNGKey, runs a forward pass, and prints all input and output shapes plus the total parameter count. This confirms end-to-end correctness (data loading -> resampling -> windowing -> encoding -> projection) without needing a GPU or the full dataset.
 
----
 
 ## TODO
 

@@ -24,7 +24,7 @@ def _scan_fn(a: tuple[jax.Array, jax.Array], b: tuple[jax.Array, jax.Array]) -> 
 
 
 # u: (B, L, D); delta: (B, L, D); A: (D, N); B: (B, L, N); C: (B, L, N)
-def selective_scan(u: jax.Array, delta: jax.Array, A: jax.Array, B: jax.Array, C: jax.Array) -> jax.Array:
+def ssm(u: jax.Array, delta: jax.Array, A: jax.Array, B: jax.Array, C: jax.Array) -> jax.Array:
     A_bar, B_bar = discretize(delta, A, B)
     b = B_bar * u[..., None]
 
