@@ -52,8 +52,17 @@ class EngageNetConfig:
     batch_size: int = 8
     seed: int = 42
 
-    # Derived helpers
+    # SSM / BiMamba
+    ssm_state_dim: int = 16        # N - state dimension in selective SSM
+    conv_kernel: int = 4           # D_C -  depthwise conv kernel in BiMamba
 
+    # Gumbel-Sinkhorn
+    gs_dim: int = 64               # query/key projection dim for score matrix
+    gs_iters: int = 10             # Sinkhorn normalisation iterations
+
+    # Beta head
+    beta_hidden: int = 128         # hidden layer width in BetaHead
+    
     # The specs for only the active modalities (filters modality_specs by active_modalities)
     @property
     def active_specs(self) -> dict[str, tuple[int, int, int, int]]:
