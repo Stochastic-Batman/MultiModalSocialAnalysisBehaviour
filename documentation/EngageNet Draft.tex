@@ -15,6 +15,10 @@
 	\date{\today}
 	\maketitle
 	
+	\begin{abstract}
+		EngageNet is a multimodal state-space architecture for real-time engagement regression in dyadic interactions. It combines per-modality bidirectional selective state-space models (BiMamba) with a differentiable Gumbel-Sinkhorn permutation layer for inter-modal fusion, and outputs calibrated predictions via Beta regression heads. A test-time adaptation mechanism leveraging predictive variance as an entropy proxy enables robust deployment under distribution shift across corpora (NoXi, NoXi+J, MPIIGroupInteracrion). The system is evaluated using the Concordance Correlation Coefficient (CCC) as the primary metric and the Compound Demographic Disparity (CDD) as a fairness constraint.
+	\end{abstract}
+
 	\section{Architecture}
 	\subsection{Input}
 	Let $x=\{x_{1},\dots,x_{M}\}$ with $x_{i}\in\R^{C_{i}\times L}$ for all $i\in\{1,\dots,M\}$, where $C_{i}$ is the number of acquisition channels for the $i$-th modality and $L$ represents the number of time steps of the input signal.
@@ -64,31 +68,6 @@
 	The function $H = \text{BiMamba}(m)$ represents the application of the entire bidirectional Mamba block (All 1--3 steps of the intra-modal module above) to the fused matrix $m$. In this inter-modal stage, the "sequence length" is now the total number of concatenated channels $\sum C_i^{\prime}$, and the "features" at each step are the temporal points $L^{\prime}$. This allows the model to build a context where the state of one modality can directly influence the hidden state of another.
 	
 	In the forward process, the hidden states built from modalities $\{1, \dots, i- 1 \}$, while in the backward process the hidden states derived from the modalities $\{M, M - 1, \dots, i + 1\}$ provide additional temporal information for the $i$-th modality.
-	
-	\section{Possible Improvement Ideas}
-	\begin{enumerate}
-		\item \hyperlink{residual}{Residual connection}: we can replace the standard residual connection with DeepSeek AI's Manifold-Constrained Hyper-Connections (mHC) \cite{xie2026mhc}. 
-		
-		Let the BiMamba transformation block be denoted as the layer function $$ \mathcal{F}(h_i) = W_{i}^{o}\left(\frac{h_{i}^{\rightarrow}+\text{Rev}_{t}(h_{i}^{\leftarrow})}{2}\right)+b_{i}^{o} $$ In the original architecture, the (residual) update is $u_i = h_i + \mathcal{F}(h_i) $. 
-		
-		To apply mHC, we expand the residual stream width by a factor of $n$ to form a multi-stream representation $\mathbf{h}_i \in \R^{n \times L^{\prime} \times C_i^{\prime}}$. The update rule becomes:
-		$$u_i = \mathcal{H}_i^{res} \mathbf{h}_i + (\mathcal{H}_i^{post})^{\top} \mathcal{F}(\mathcal{H}_i^{pre} \mathbf{h}_i)$$
-		where $\mathcal{H}_i^{pre} \in \R^{1 \times n}$ aggregates the multi-stream into a single input for $\mathcal{F}$, $\mathcal{H}_i^{post} \in \R^{1 \times n}$ maps the output back to the stream, and $\mathcal{H}_i^{res} \in \R^{n \times n}$ mixes features within the stream. 
-		
-		The structural mappings $\mathcal{H}_i^{pre}$ and $\mathcal{H}_i^{post}$ are composed of dynamic, input-dependent linear projections and static, learnable biases. To prevent signal cancellation, they are mapped through a \textit{sigmoid} activation $\sigma$:
-		
-		$$\mathcal{H}_i^{pre} = \sigma(\alpha_{i}^{pre} (\vec{\mathbf{h}}_i \varphi_{i}^{pre}) + b_{i}^{pre})$$
-		
-		$$\mathcal{H}_i^{post} = 2\sigma(\alpha_{i}^{post} (\vec{\mathbf{h}}_i \varphi_{i}^{post}) + b_{i}^{post})$$
-		
-		where $\vec{\mathbf{h}}_i$ is the flattened input tensor, $\varphi$ represents the linear projection weights, and $\alpha$ acts as a learnable gating factor.
-		
-		To maintain signal conservation, $\mathcal{H}_i^{res}$ is projected onto the Birkhoff polytope using the Sinkhorn-Knopp algorithm. The Birkhoff polytope is the convex hull of all permutation matrices, consisting entirely of doubly stochastic matrices (square matrices with non-negative real entries where each row and column sums exactly to 1). 
-		
-		The projection is achieved iteratively:
-		$$\mathcal{H}_i^{res} = \text{Sinkhorn-Knopp}(\tilde{\mathcal{H}}_i^{res})$$
-		Given an initial positive matrix $M^{(0)} = \exp(\tilde{\mathcal{H}}_i^{res})$, the Sinkhorn-Knopp algorithm alternately normalizes the rows and columns until convergence. Constraining $\mathcal{H}_i^{res}$ to the Birkhoff polytope ensures its spectral norm is strictly bounded by 1 ($||\mathcal{H}_i^{res}||_2 \le 1$). This property guarantees stability across deep layers, strictly regulating the vector norm and preventing the signal from exploding or vanishing within the Hilbert space of our feature representations.
-	\end{enumerate}
 	
 	\section{Engagement Regression Adaptation}
 	
@@ -335,6 +314,27 @@
 	\subsubsection*{Equivariance guarantee}
 	Let $\rho \in S_M$ be applied to the inputs before the meta-network. Because $Z_{ij}$ is computed from the data via the shared query-key projections, relabelling the inputs by $\rho$ relabels the rows and columns of $Z$ by $\rho$ as well, and consequently the recovered hard permutation transforms as $\pi^*_\rho = \rho \circ \pi^*$. The permuted sequence fed to the inter-modal BiMamba is therefore the same physical ordering of modalities regardless of how the practitioner originally numbered them. Consequently, the fused representation $H = \text{BiMamba}(\tilde{m})$ is invariant to the practitioner's arbitrary choice of concatenation order, provided the model has converged to a stable optimal ordering $\pi^*$.
 	
+	\section{Evaluation}
+
+	\subsection{Concordance Correlation Coefficient (CCC)}
+	The primary evaluation metric is the Concordance Correlation Coefficient \cite{lin1989ccc}, which measures agreement between predicted and ground-truth engagement trajectories:
+	$$
+	\text{CCC}(\hat{y}, y) = \frac{2\rho\,\sigma_{\hat{y}}\,\sigma_y}{\sigma_{\hat{y}}^2 + \sigma_y^2 + (\mu_{\hat{y}} - \mu_y)^2},
+	$$
+	where $\rho$ is the Pearson correlation between predictions $\hat{y}$ and targets $y$, $\sigma_{\hat{y}}, \sigma_y$ are their standard deviations, and $\mu_{\hat{y}}, \mu_y$ are their means. CCC $\in [-1, 1]$, with $1$ indicating perfect concordance. Unlike Pearson correlation alone, CCC penalises both scale and location shifts.
+
+	The combined CCC across $N$ engagement dimensions is computed as:
+	$$
+	\text{CCC}_{\text{combined}} = \frac{1}{N}\sum_{n=1}^{N} \text{CCC}_n.
+	$$
+
+	\subsection{Compound Demographic Disparity (CDD)}
+	To quantify fairness across demographic groups, we adopt the Compound Demographic Disparity:
+	$$
+	\text{CDD} = \frac{1}{|G|}\sum_{g \in G} \bigl| \text{CCC}_g - \text{CCC}_{\text{all}} \bigr|,
+	$$
+	where $G$ is the set of demographic groups (e.g., gender or language subgroups), $\text{CCC}_g$ is the metric restricted to group $g$, and $\text{CCC}_{\text{all}}$ is the overall metric. Lower CDD indicates more equitable performance across groups.
+
 	\newpage
 	\begin{thebibliography}{9}
 		
@@ -373,6 +373,9 @@
 		
 		\bibitem{gibbs2021}
 		Isaac Gibbs and Emmanuel Candès, \emph{Adaptive Conformal Inference Under Distribution Shift}, Advances in Neural Information Processing Systems (NeurIPS 2021), 34, 1660--1672 (2021).
+
+		\bibitem{lin1989ccc}
+		Lawrence I-Kuei Lin, \emph{A Concordance Correlation Coefficient to Evaluate Reproducibility}, Biometrics, 45(1), 255--268 (1989).
 	\end{thebibliography}
 	
 \end{document}

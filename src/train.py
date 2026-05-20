@@ -38,8 +38,12 @@ def train_step(state: TrainState, batch: dict[str, jax.Array], rng: jax.Array, t
 
     def loss_fn(params):
         variables = {"params": params, "batch_stats": state.batch_stats}
-        (alpha, beta, _unimodal), updates = state.apply_fn(variables, stream_inputs, tau=tau, rng=rng, train=True, mutable=["batch_stats"])
+        (alpha, beta, unimodal), updates = state.apply_fn(variables, stream_inputs, tau=tau, rng=rng, train=True, mutable=["batch_stats"])
         loss = nll_loss(alpha, beta, target)
+
+        for _key, (a_i, b_i) in unimodal.items():
+            loss = loss + 0.5 * nll_loss(a_i, b_i, target)
+
         return loss, updates["batch_stats"]
 
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)

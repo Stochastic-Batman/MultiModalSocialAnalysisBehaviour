@@ -7,18 +7,18 @@ import jax.numpy as jnp
 from jax.scipy.stats import beta as beta_dist
 
 
-# alpha: (B,) ; beta: (B,) -> (B,)
+# alpha: (B, ...) ; beta: (B, ...) -> (B, ...)
 def predictive_mean(alpha: jax.Array, beta: jax.Array) -> jax.Array:
     return alpha / (alpha + beta)
 
 
-# alpha: (B,) ; beta: (B,) -> (B,)
+# alpha: (B, ...) ; beta: (B, ...) -> (B, ...)
 def predictive_variance(alpha: jax.Array, beta: jax.Array) -> jax.Array:
     apb = alpha + beta
     return (alpha * beta) / (apb * apb * (apb + 1))
 
 
-# alpha: (B,) ; beta: (B,) ; targets: (B,) -> scalar
+# alpha: (B, ...) ; beta: (B, ...) ; targets: (B, ...) -> scalar
 def nll_loss(alpha: jax.Array, beta: jax.Array, targets: jax.Array) -> jax.Array:
     targets = jnp.clip(targets, 1e-6, 1.0 - 1e-6)
     return -beta_dist.logpdf(targets, alpha, beta).mean()
@@ -27,7 +27,7 @@ def nll_loss(alpha: jax.Array, beta: jax.Array, targets: jax.Array) -> jax.Array
 class BetaHead(nn.Module):
     hidden_dim: int = 128
 
-    # y: (B, D) -> (alpha: (B,), beta: (B,))
+    # y: (B, ..., D) -> (alpha: (B, ...), beta: (B, ...))
     @nn.compact
     def __call__(self, y: jax.Array) -> tuple[jax.Array, jax.Array]:
         y_proj = nn.silu(nn.Dense(features=self.hidden_dim)(y))
@@ -43,7 +43,7 @@ class BetaHead(nn.Module):
 class MultiHeadBeta(nn.Module):
     hidden_dim: int = 128
 
-    # fused: (B, L', MC') ; per_modality: dict{str: (B, L', C')} -> (multimodal_alpha, multimodal_beta, dict{str: (alpha, beta)})
+    # fused: (B, L', MC') ; per_modality: dict{str: (B, L', C')} -> (multimodal_alpha: (B, L'), multimodal_beta: (B, L'), dict{str: (alpha, beta)})
     @nn.compact
     def __call__(self, fused: jax.Array, per_modality: dict[str, jax.Array]) -> tuple[jax.Array, jax.Array, dict[str, tuple[jax.Array, jax.Array]]]:
         multimodal_alpha, multimodal_beta = BetaHead(hidden_dim=self.hidden_dim, name="multi_head")(fused)

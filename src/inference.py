@@ -56,7 +56,11 @@ def run_session(session_dir: Path, state: TrainState, cnfg: EngageNetConfig, rng
         variables = {"params": state.params, "batch_stats": state.batch_stats}
         (alpha, beta, unimodal), _ = state.apply_fn(variables, stream_inputs, tau=cnfg.tau_min, rng=None, train=False, mutable=["batch_stats"])
 
-        mask = sample_filter(alpha.mean(axis=-1), beta.mean(axis=-1), {k: (a.mean(axis=-1), b.mean(axis=-1)) for k, (a, b) in unimodal.items()})
+        # Pool over time for TTA sample filter (needs scalar uncertainty per sample)
+        alpha_pooled = alpha.mean(axis=-1)
+        beta_pooled = beta.mean(axis=-1)
+        unimodal_pooled = {k: (a.mean(axis=-1), b.mean(axis=-1)) for k, (a, b) in unimodal.items()}
+        mask = sample_filter(alpha_pooled, beta_pooled, unimodal_pooled)
         if mask.any():
             rng, rng_tta = jax.random.split(rng)
             state, _loss, alpha, beta, unimodal = tta_step(state, stream_inputs, tau=cnfg.tau_min, rng=rng_tta)
