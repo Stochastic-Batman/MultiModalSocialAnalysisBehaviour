@@ -18,4 +18,7 @@ COPY src/ src/
 COPY models/ models/
 COPY data/ data/
 
+RUN mkdir -p /app/submissions
+VOLUME /app/submissions
+
 CMD ["python3.14", "src/inference.py"]

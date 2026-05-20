@@ -55,18 +55,19 @@ class EngageNetDataset:
         One of "train", "val", "test".
     """
 
-    def __init__(self, cnfg: EngageNetConfig, split: str) -> None:
+    def __init__(self, cnfg: EngageNetConfig, split: str | None = None, session_dirs: list[Path] | None = None) -> None:
         self.cnfg = cnfg
+
         if split not in ["train", "test", "val"]:
-            raise ValueError(f"Unknown split {split}")
+            log.warning(f"Unknown split {split}")
         self.split = split
-        
-        split_path = cnfg.split_dir(split)
-        self.session_dirs: list[Path] = sorted([p for p in split_path.iterdir() if p.is_dir()])
-        
-        if not self.session_dirs:
-            raise FileNotFoundError(f"No session directories found in {split_path}")
-        
+
+        if session_dirs is not None:
+            self.session_dirs = session_dirs
+        else:
+            split_path = cnfg.split_dir(split)
+            self.session_dirs = sorted([p for p in split_path.iterdir() if p.is_dir()])
+
         log.info(f"EngageNetDataset: {split} - {len(self.session_dirs)} sessions")
 
 

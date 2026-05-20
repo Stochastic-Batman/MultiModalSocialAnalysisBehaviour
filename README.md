@@ -135,14 +135,17 @@ pip install "jax[cuda12]" flax optax
 ├── EngageNet_venv/                          # Python virtual environment
 ├── requirements.txt                         # For Docker
 ├── src/
+│   ├── aggregator.py                        # Overlap-add window predictions into session time series
 │   ├── beta_head.py                         # Beta regression heads (multimodal + per-modality)
 │   ├── bimamba.py                           # BiMamba block + IntraModalBiMamba wrapper
 │   ├── config.py                            # Centralised hyperparameters and paths
 │   ├── data_loader.py                       # Batch-yielding generator over the dataset
 │   ├── dataset.py                           # Lazy, memory-efficient window iterator
-│   ├── inference.py                         # Script for inference
+│   ├── evaluate.py                          # Score submission CSVs against ground-truth (CCC, CDD)
+│   ├── inference.py                         # Multi-corpus TTA inference + submission CSV output
 │   ├── init_encoder.py                      # Per-modality shallow 1-D CNN encoder
 │   ├── inter_modal.py                       # Gumbel-Sinkhorn ordering + cross-modal BiMamba
+│   ├── metrics.py                           # CCC, CDD_G, CDD_L metric implementations
 │   ├── modality_frontend.py                 # Runs all InitEncoders + channel projections
 │   ├── model.py                             # Full EngageNet wiring all modules together
 │   ├── read_data.py                         # Low-level SSI stream / annotation readers
@@ -193,7 +196,7 @@ python src/train.py --active-modalities audio.egemapsv2 audio.w2vbert2_embedding
 python src/train.py --help
 ```
 
-Checkpoints are saved to `models/EngageNet_{epoch}` every `--checkpoint-every` epochs (default: 10).
+Checkpoints are saved to `models/EngageNet_{epoch}` every `--checkpoint-every` epochs (default: 10). Training includes CCC-based validation every epoch with early stopping (patience=10). The best checkpoint is saved to `models/best/`.
 
 
 ## Test-Time Adaptation
@@ -205,6 +208,17 @@ Key functions in `src/tta.py`:
 - `tta_loss` - mutual information sharing (KL divergence) + pseudo-label supervision
 - `surgical_mask` - freezes all parameters except the designated surgical layers
 - `tta_step` - single adaptation step with masked gradients
+
+
+## Evaluation
+
+Score predictions against ground-truth (works on val split where labels exist):
+
+```bash
+python src/evaluate.py --submission-dir submissions/ --data-root data/ --corpora NoXi NoXi+J --split val
+```
+
+Outputs per-corpus CCC, Combined CCC, and saves `submissions/results.json`.
 
 
 ## Docker

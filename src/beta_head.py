@@ -46,7 +46,7 @@ class MultiHeadBeta(nn.Module):
     # fused: (B, L', MC') ; per_modality: dict{str: (B, L', C')} -> (multimodal_alpha, multimodal_beta, dict{str: (alpha, beta)})
     @nn.compact
     def __call__(self, fused: jax.Array, per_modality: dict[str, jax.Array]) -> tuple[jax.Array, jax.Array, dict[str, tuple[jax.Array, jax.Array]]]:
-        multimodal_alpha, multimodal_beta = BetaHead(hidden_dim=self.hidden_dim, name="multi_head")(fused.mean(axis=1))
+        multimodal_alpha, multimodal_beta = BetaHead(hidden_dim=self.hidden_dim, name="multi_head")(fused)
 
         feats = sorted(set(key.split(".", 1)[1] for key in per_modality))
         unimodal: dict[str, tuple[jax.Array, jax.Array]] = {}
@@ -55,7 +55,7 @@ class MultiHeadBeta(nn.Module):
             head = BetaHead(hidden_dim=self.hidden_dim, name=f"uni_head_{feat.replace('.', '_')}")
             for key in sorted(per_modality):
                 if key.split(".", 1)[1] == feat:
-                    unimodal[key] = head(per_modality[key].mean(axis=1))
+                    unimodal[key] = head(per_modality[key])
 
         return multimodal_alpha, multimodal_beta, unimodal
 

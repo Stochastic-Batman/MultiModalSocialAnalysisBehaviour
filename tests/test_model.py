@@ -53,13 +53,13 @@ def main() -> None:
     )
 
     log.info(f"multi_alpha: {multi_alpha.shape}  multi_beta: {multi_beta.shape}")
-    assert multi_alpha.shape == (B,)
-    assert multi_beta.shape == (B,)
+    assert multi_alpha.shape == (B, cnfg.window_len)
+    assert multi_beta.shape == (B, cnfg.window_len)
 
     for k, (a, b) in sorted(unimodal.items()):
         log.info(f"  {k:45s}  alpha={a.shape} beta={b.shape}")
-        assert a.shape == (B,)
-        assert b.shape == (B,)
+        assert a.shape == (B, cnfg.window_len)
+        assert b.shape == (B, cnfg.window_len)
 
     # Sanity: alpha, beta > 1 (unimodal Beta)
     assert (multi_alpha > 1).all(), f"multi_alpha has values <= 1: {multi_alpha}"

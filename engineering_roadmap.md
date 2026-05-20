@@ -98,24 +98,38 @@ Verifies three things on CPU with synthetic data: (1) `P` is doubly stochastic (
 
 ### `src/beta_head.py`
 
-A `BetaHead` Flax module: mean-pool over the time axis, then two `nn.Dense` layers producing raw logits for alpha and beta, followed by `softplus + 1` to get valid shape parameters both greater than one (ensuring a unimodal distribution). Add static methods for `predictive_mean` (alpha divided by alpha plus beta), `predictive_variance` (the TTA uncertainty proxy: alpha times beta divided by the square of their sum times their sum plus one), and `nll_loss` (Beta negative log-likelihood). Then write `MultiHeadBeta` that instantiates one `BetaHead` per modality key (the unimodal heads fed directly by each per-modality output of `IntraModalBiMamba`) plus one for the fused inter-modal output - all needed by the TTA sample selection filter.
+`BetaHead` is a per-timestep Flax module: `Dense -> SiLU -> two Dense(1) -> softplus + 1`. It accepts arbitrary leading dimensions so it works on both `(B, D)` pooled input and `(B, L', D)` per-frame input. `MultiHeadBeta` applies one `BetaHead` to the fused inter-modal output `(B, L', MC')` for the multimodal prediction, and one per feature type (shared across roles) to each per-modality tensor `(B, L', C')`. All outputs are per-frame `(B, L')`. Standalone functions `predictive_mean`, `predictive_variance`, and `nll_loss` operate on arbitrary shapes.
 
 ### `src/model.py`
 
-The full `EngageNet` Flax module that wires everything together in order: `ModalityFrontend` -> `IntraModalBiMamba` -> `InterModalBiMamba` -> `MultiHeadBeta`. Returns a dict with the multimodal prediction (alpha and beta for the fused output) and all unimodal predictions (alpha and beta per modality). The unimodal outputs are needed at train time for the TTA loss but are cheap to compute here since the unimodal heads share the already-computed per-modality representations.
-
-Add `tests/test_model.py`: full forward pass smoke test analogous to the existing `test_frontend.py`.
-
+The full `EngageNet` Flax module: `ModalityFrontend -> IntraModalBiMamba -> InterModalBiMamba -> MultiHeadBeta`. All hyperparameters come from `cnfg` (no duplicated constants). Returns `(multi_alpha, multi_beta, unimodal_dict)` all at per-frame `(B, L')` resolution.
 
 ### `src/train.py`
 
-Standard Flax + Optax training loop. Create a `TrainState` with an AdamW optimiser. The loss is Beta negative log-likelihood on the multimodal head. Iterate via `data_loader.iter_batches()`, call `jax.jit`-compiled train and eval steps, log metrics, and checkpoint with `orbax-checkpoint`. Handle temperature annealing for Gumbel-Sinkhorn: decay `tau` each epoch starting from an initial exploration temperature down to a near-deterministic floor via exponential decay.
+Flax + Optax training loop with AdamW. Per-frame Beta NLL loss against engagement targets `(B, L)`. CCC-based validation every `eval_every` epochs with early stopping (`patience` epochs without improvement). Gumbel-Sinkhorn temperature annealed via exponential decay. Checkpoints saved every `checkpoint_every` epochs plus a `best/` checkpoint on val CCC improvement. All hyperparameters from `EngageNetConfig.from_cli()`.
 
 ### `src/tta.py`
 
-Implement the TTA loop. The two-level sample filter keeps samples where the multimodal uncertainty is low (the fused prediction is confident) but the weighted average of unimodal uncertainties is high (individual modalities disagree), using adaptive percentile thresholds maintained over a moving window of the most recent `K` frames. The mutual information sharing loss is the sum of closed-form KL divergences between each unimodal Beta distribution and the multimodal Beta distribution. The total TTA loss combines this with a pseudo-label supervision term that treats the multimodal predictive mean as a target for each unimodal head, weighted by a hyperparameter `lambda`. Surgical fine-tuning: a helper that takes a `TrainState` and returns a masked gradient update that only touches BatchNorm parameters, `conv1` in each `InitEncoder`, and the first linear layer in the inter-modal BiMamba - everything else gets a zero gradient.
+Test-time adaptation library (not a script). `sample_filter`: two-level uncertainty filter keeping samples where multimodal variance is low but unimodal variance is high (adaptive percentile thresholds). `beta_kl`: closed-form KL divergence between Beta distributions. `tta_loss`: mutual information sharing (sum of KL divergences) + pseudo-label supervision weighted by `lambda`. `surgical_mask`: walks the param tree, returns True only for BatchNorm layers, `conv1` in InitEncoder, and first Dense in cross-modal BiMamba. `tta_step`: computes TTA loss, takes gradients, zeros non-surgical ones via the mask, updates state.
 
+### `src/metrics.py`
 
-### Dockerfile set-up and actual training
+- `ccc`: Concordance Correlation Coefficient using population covariance.
+- `combined_ccc`: unweighted mean across domains. 
+- `cdd_gender` and `cdd_language`: Conditional Demographic Disparity metrics using equal-frequency binning of targets.
 
-Basically what the title says.
+### `src/aggregator.py`
+
+`aggregate_windows`: overlap-add that averages per-frame predictions from overlapping windows into a full session time series. Uncovered tail frames filled with last valid value.
+
+### `src/inference.py`
+
+Multi-corpus TTA inference script. Loads best (or latest) checkpoint, iterates over all corpora in `SUBMISSION_CORPORA`, processes each session window-by-window with optional TTA on qualifying samples, aggregates per-frame predictions via `aggregate_windows`, and writes submission CSVs in the challenge format (`{role}.engagement.annotation.csv`, one float per line at 25 Hz).
+
+### `src/evaluate.py`
+
+Scoring script. Loads ground-truth and prediction CSVs, computes per-session CCC, per-corpus CCC, Combined CCC, and saves `results.json`. Accepts `--corpora` and `--split` to evaluate on val or (when released) test.
+
+### `tests/test_model.py`
+
+Full forward pass smoke test with synthetic data on CPU (CORE_MODALITIES, batch=2). Verifies output shapes are `(B, L')` and alpha/beta > 1.
