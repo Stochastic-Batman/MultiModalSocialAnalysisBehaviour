@@ -1,0 +1,21 @@
+FROM nvidia/cuda:12.9.0-cudnn-runtime-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.14 python3.14-venv python3.14-dev curl && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.14
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN python3.14 -m pip install --no-cache-dir -r requirements.txt
+
+COPY src/ src/
+COPY tests/ tests/
+COPY data/ data/
+
+CMD ["python3.14", "src/train.py"]

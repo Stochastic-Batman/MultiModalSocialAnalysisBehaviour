@@ -131,13 +131,16 @@ pip install "jax[cuda12]" flax optax
 │   ├── NoXi/
 │   ├── NoXi+J/
 │   └── MPII/
+├── Dockerfile.train/Dockerfile.inference    # Dockerfiles for training and inference
 ├── EngageNet_venv/                          # Python virtual environment
+├── requirements.txt                         # For Docker
 ├── src/
 │   ├── beta_head.py                         # Beta regression heads (multimodal + per-modality)
 │   ├── bimamba.py                           # BiMamba block + IntraModalBiMamba wrapper
 │   ├── config.py                            # Centralised hyperparameters and paths
 │   ├── data_loader.py                       # Batch-yielding generator over the dataset
 │   ├── dataset.py                           # Lazy, memory-efficient window iterator
+│   ├── inference.py                         # Script for inference
 │   ├── init_encoder.py                      # Per-modality shallow 1-D CNN encoder
 │   ├── inter_modal.py                       # Gumbel-Sinkhorn ordering + cross-modal BiMamba
 │   ├── modality_frontend.py                 # Runs all InitEncoders + channel projections
@@ -148,7 +151,8 @@ pip install "jax[cuda12]" flax optax
 │   └── tta.py                               # Test-time adaptation loop
 ├── tests/
 │   ├── test_frontend.py                     # Smoke-test: end-to-end forward pass on CPU
-│   └── test_inter_modal.py                  # Smoke-test: Gumbel-Sinkhorn + cross-modal BiMamba
+│   ├── test_inter_modal.py                  # Smoke-test: Gumbel-Sinkhorn + cross-modal BiMamba
+│   └── test_model.py                        # Smoke-test of the entire model
 ├── engineering_roadmap.md
 └── README.md
 ```
@@ -167,6 +171,9 @@ python tests/test_frontend.py --core
 # Specify a different split
 python tests/test_frontend.py val
 python tests/test_frontend.py val --core
+
+# All 3 tests
+python tests/test_frontend.py && python tests/test_inter_modal.py && python tests/test_model.py
 ```
 
 The `--core` flag restricts processing to `eGeMaps v2`, `W2v-BERT 2.0`, `OpenFace2`, and `OpenPose` - the streams most relevant to engagement prediction. See `CORE_MODALITIES` in `src/config.py`.
@@ -198,6 +205,36 @@ Key functions in `src/tta.py`:
 - `tta_loss` - mutual information sharing (KL divergence) + pseudo-label supervision
 - `surgical_mask` - freezes all parameters except the designated surgical layers
 - `tta_step` - single adaptation step with masked gradients
+
+
+## Docker
+
+The repo provides two Dockerfiles for the same codebase - one for training, one for inference. Both share `requirements.txt` and the `src/` directory, but differ in what data they expect and what script they run.
+
+
+The inference container expects a `models/` directory with at least one checkpoint produced by training. It automatically loads the checkpoint with the highest epoch number.
+
+```bash
+# Build
+docker build -f Dockerfile.train -t engagenet-train .
+docker build -f Dockerfile.inference -t engagenet-inference .
+
+# Train (GPU required)
+docker run --gpus all engagenet-train
+
+# Train with custom params
+docker run --gpus all engagenet-train python3.14 src/train.py --n-epochs 100 --lr 5e-4
+
+# Inference with TTA (after training)
+docker run --gpus all engagenet-inference
+```
+
+If `data/` is too large to copy into the image, mount it at runtime instead:
+
+```bash
+docker run --gpus all -v /path/to/data:/app/data engagenet-train
+docker run --gpus all -v /path/to/data:/app/data -v /path/to/models:/app/models engagenet-inference
+```
 
 
 ## Contributors

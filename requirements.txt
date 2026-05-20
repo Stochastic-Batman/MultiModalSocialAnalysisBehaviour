@@ -1,0 +1,12 @@
+absl-py==2.4.0
+etils==1.14.0
+flax==0.12.7
+jax[cuda12]==0.10.0
+jaxlib==0.10.0
+matplotlib==3.10.9
+numpy==2.4.5
+optax==0.2.8
+orbax-checkpoint==0.11.39
+pandas==3.0.3
+scipy==1.17.1
+tqdm==4.67.3
